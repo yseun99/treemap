@@ -4,29 +4,33 @@
 //
 // Example:
 //
-//     package main
+//	package main
 //
-//     import (
-//         "fmt"
+//	import (
+//	    "fmt"
 //
-//         "github.com/igrmk/treemap/v2"
-//     )
+//	    "github.com/igrmk/treemap/v2"
+//	)
 //
-//     func main() {
-//         tree := treemap.New[int, string]()
-//         tree.Set(1, "World")
-//         tree.Set(0, "Hello")
-//         for it := tree.Iterator(); it.Valid(); it.Next() {
-//             fmt.Println(it.Key(), it.Value())
-//         }
-//     }
+//	func main() {
+//	    tree := treemap.New[int, string]()
+//	    tree.Set(1, "World")
+//	    tree.Set(0, "Hello")
+//	    for it := tree.Iterator(); it.Valid(); it.Next() {
+//	        fmt.Println(it.Key(), it.Value())
+//	    }
+//	}
 //
-//     // Output:
-//     // 0 Hello
-//     // 1 World
+//	// Output:
+//	// 0 Hello
+//	// 1 World
 package treemap
 
-import "golang.org/x/exp/constraints"
+import (
+	"sync"
+
+	"golang.org/x/exp/constraints"
+)
 
 // TreeMap is the generic red-black tree based map
 type TreeMap[Key, Value any] struct {
@@ -34,6 +38,7 @@ type TreeMap[Key, Value any] struct {
 	beginNode  *node[Key, Value]
 	count      int
 	keyCompare func(a Key, b Key) bool
+	mu         sync.RWMutex // used to serialize read and write operations
 }
 
 type node[Key, Value any] struct {
@@ -67,6 +72,9 @@ func (t *TreeMap[Key, Value]) Len() int { return t.count }
 // Set sets the value and silently overrides previous value if it exists.
 // Complexity: O(log N).
 func (t *TreeMap[Key, Value]) Set(key Key, value Value) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	parent := t.endNode
 	current := parent.left
 	less := true
@@ -100,6 +108,9 @@ func (t *TreeMap[Key, Value]) Set(key Key, value Value) {
 // Del deletes the value.
 // Complexity: O(log N).
 func (t *TreeMap[Key, Value]) Del(key Key) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	z := t.findNode(key)
 	if z == nil {
 		return
@@ -118,6 +129,9 @@ func (t *TreeMap[Key, Value]) Del(key Key) {
 // Clear clears the map.
 // Complexity: O(1).
 func (t *TreeMap[Key, Value]) Clear() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	t.count = 0
 	t.beginNode = t.endNode
 	t.endNode.left = nil
@@ -126,6 +140,9 @@ func (t *TreeMap[Key, Value]) Clear() {
 // Get retrieves a value from a map for specified key and reports if it exists.
 // Complexity: O(log N).
 func (t *TreeMap[Key, Value]) Get(id Key) (Value, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
 	node := t.findNode(id)
 	if node == nil {
 		node = t.endNode
@@ -135,7 +152,12 @@ func (t *TreeMap[Key, Value]) Get(id Key) (Value, bool) {
 
 // Contains checks if key exists in a map.
 // Complexity: O(log N)
-func (t *TreeMap[Key, Value]) Contains(id Key) bool { return t.findNode(id) != nil }
+func (t *TreeMap[Key, Value]) Contains(id Key) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	return t.findNode(id) != nil
+}
 
 // Range returns a pair of iterators that you can use to go through all the keys in the range [from, to].
 // More specifically it returns iterators pointing to lower bound and upper bound.
@@ -363,8 +385,9 @@ func (t *TreeMap[Key, Value]) insertFixup(x *node[Key, Value]) {
 	}
 }
 
+// noinspection GoNilness
+//
 //nolint:gocyclo
-//noinspection GoNilness
 func removeNode[Key, Value any](
 	root, z *node[Key, Value],
 ) {
